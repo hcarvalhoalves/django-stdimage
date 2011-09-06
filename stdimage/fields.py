@@ -5,9 +5,12 @@ from django.conf import settings
 from django.core.files.storage import FileSystemStorage
 from django.db.models import signals
 from django.db.models.fields.files import ImageField, ImageFileDescriptor
+from django.utils.hashcompat import md5_constructor
 
 from forms import StdImageFormField
 from widgets import DelAdminFileWidget
+
+from datetime import datetime
 
 
 class ThumbnailField(object):
@@ -130,7 +133,14 @@ class StdImageField(ImageField):
             except IOError:
                 img.save(filename)
 
-    def _rename_resize_image(self, instance=None, **kwargs):
+
+    def _get_random_hash(self):
+        """Returns a random, URL-safe unique string for using on filename."""
+        
+        h = md5_constructor(unicode(datetime.now())).hexdigest()
+        return unicode(h.encode('base64').replace('=\n', ''))
+
+    def _pre_resize_image(self, instance=None, **kwargs):
         """Renames the image, and calls methods to resize and create the
         thumbnail.
 
@@ -138,21 +148,15 @@ class StdImageField(ImageField):
 
         if getattr(instance, self.name):
             filename = getattr(instance, self.name).path
-            ext = os.path.splitext(filename)[1].lower().replace('jpg', 'jpeg')
-            dst = self.generate_filename(instance, '%s_%s%s' % (self.name,
-                                                instance._get_pk_val(), ext))
-            dst_fullpath = os.path.join(settings.MEDIA_ROOT, dst)
-            if os.path.abspath(filename) != os.path.abspath(dst_fullpath):
-                os.rename(filename, dst_fullpath)
-                if self.size:
-                    self._resize_image(dst_fullpath, self.size)
-                if self.thumbnail_size:
-                    thumbnail_filename = self._get_thumbnail_filename(
-                        dst_fullpath)
-                    shutil.copyfile(dst_fullpath, thumbnail_filename)
-                    self._resize_image(thumbnail_filename, self.thumbnail_size)
-                setattr(instance, self.attname, dst)
-                instance.save()
+            dst_fullpath = os.path.join(settings.MEDIA_ROOT, filename)
+            if self.size:
+                self._resize_image(dst_fullpath, self.size)
+            if self.thumbnail_size:
+                thumbnail_filename = self._get_thumbnail_filename(
+                    dst_fullpath)
+                shutil.copyfile(dst_fullpath, thumbnail_filename)
+                self._resize_image(thumbnail_filename, self.thumbnail_size)
+            setattr(instance, self.attname, filename)
 
     def _set_thumbnail(self, instance=None, **kwargs):
         """Creates a "thumbnail" object as attribute of the ImageField instance
@@ -168,6 +172,15 @@ class StdImageField(ImageField):
             thumbnail_field = ThumbnailField(thumbnail_filename)
             setattr(getattr(instance, self.name), 'thumbnail', thumbnail_field)
 
+    def generate_filename(self, instance, filename):
+        """Generate a unique filename for the uploaded file."""
+        
+        if callable(self.upload_to):
+            return self.upload_to(instance, filename)
+
+        ext = os.path.splitext(filename)[1].lower().replace('jpg', 'jpeg')        
+        fname = "%s%s" % (self._get_random_hash(), ext)
+        return os.path.join(self.upload_to, fname)
 
     def formfield(self, **kwargs):
         """Specify form field and widget to be used on the forms"""
@@ -207,5 +220,5 @@ class StdImageField(ImageField):
         """Call methods for generating all operations on specified signals"""
 
         super(StdImageField, self).contribute_to_class(cls, name)
-        signals.post_save.connect(self._rename_resize_image, sender=cls)
+        signals.post_save.connect(self._pre_resize_image, sender=cls)
         signals.post_init.connect(self._set_thumbnail, sender=cls)
