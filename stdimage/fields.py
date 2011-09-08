@@ -166,8 +166,7 @@ class StdImageField(ImageField):
         """
 
         if getattr(instance, self.name):
-            filename = self.generate_filename(instance,
-                        os.path.basename(getattr(instance, self.name).path))
+            filename = getattr(instance, self.name).url
             thumbnail_filename = self._get_thumbnail_filename(filename)
             thumbnail_field = ThumbnailField(thumbnail_filename)
             setattr(getattr(instance, self.name), 'thumbnail', thumbnail_field)
